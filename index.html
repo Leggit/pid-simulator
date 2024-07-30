@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Drone Side Profile</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+      body {
+        color: white;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        display: flex;
+        flex-direction: column;
+        margin: 0;
+        padding: 0;
+      }
+      .flex {
+        display: flex;
+        flex-wrap: wrap;
+      }
+      .input-group {
+        flex-basis: 25%;
+        border-radius: 16px;
+        background-color: rgb(54, 51, 51);
+        margin: 8px;
+        padding: 8px;
+        padding-left: 16px;
+        padding-right: 16px;
+        display: flex;
+        flex-direction: column;
+        text-align: center;
+      }
+      input[type="number"] {
+        border-radius: 8px;
+        padding: 8px;
+        box-shadow: none;
+        border: none;
+        font-weight: bold;
+        font-size: medium;
+        margin-bottom: 8px;
+        text-align: center;
+      }
+      input[type="number"]:focus {
+        border: none;
+      }
+      label {
+        margin-bottom: 4px;
+      }
+      #droneCanvas {
+        background-color: rgb(102, 220, 249);
+      }
+      #chartCanvas {
+        background-color: rgb(255, 255, 255);
+      }
+      .button-container {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 8px;
+      }
+      button {
+        background-color: blue;
+        color: white;
+        padding: 16px;
+        border-radius: 16px;
+        border: none;
+        font-size: 16px;
+        width: 100%;
+        cursor: pointer;
+      }
+      button:hover {
+        background-color: rgb(88, 88, 229);
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="droneCanvas" height="300"></canvas>
+    <canvas id="chartCanvas" height="200"></canvas>
+    <canvas id="iCanvas" height="200"></canvas>
+
+    <div class="input-group">
+      <label for="tilt">Tilt</label>
+      <input
+        oninput="tilt = event.target.value"
+        id="tilt"
+        type="range"
+        min="-90"
+        max="90"
+        value="0"
+      />
+    </div>
+    <div class="flex">
+      <div class="input-group">
+        <label for="pGain"><em>K</em><sub>p</sub></label>
+        <input
+          onchange="dGain = parseFloat(event.target.value)"
+          id="pGain"
+          type="number"
+          value="0"
+        />
+      </div>
+      <div class="input-group">
+        <label for="dGain"><em>K</em><sub>i</sub></label>
+        <input
+          onchange="iGain = parseFloat(event.target.value)"
+          id="iGain"
+          type="number"
+          value="0"
+        />
+      </div>
+      <div class="input-group">
+        <label for="dGain"><em>K</em><sub>d</sub></label>
+        <input
+          onchange="dGain = parseFloat(event.target.value)"
+          id="dGain"
+          type="number"
+          value="0"
+        />
+      </div>
+    </div>
+
+    <div class="button-container">
+      <button onclick="level()">Level</button>
+      <button onclick="reset()">Reset</button>
+    </div>
+
+    <script>
+      let tilt = 0;
+      let tiltHistor = [];
+      let pHistory = [];
+      let iHistory = [];
+      let dHistory = [];
+      let dpsHistory = [];
+
+      let i = 0;
+      let prevError = 0;
+      let dGain = -0.25;
+      let pGain = -0.025;
+      let iGain = -0.0015;
+      let droneDps = 0;
+
+      const pGainInput = document.querySelector("#pGain");
+      pGainInput.value = pGain;
+      const iGainInput = document.querySelector("#iGain");
+      iGainInput.value = iGain;
+      const dGainInput = document.querySelector("#dGain");
+      dGainInput.value = dGain;
+
+      const sliderInput = document.querySelector("#tilt");
+
+      const droneCanvas = document.getElementById("droneCanvas");
+      const chartCavnas = document.getElementById("chartCanvas");
+      const iCanvas = document.getElementById("iCanvas");
+
+      droneCanvas.width = window.visualViewport.width;
+      chartCavnas.width = window.visualViewport.width;
+
+      const ctx = droneCanvas.getContext("2d");
+
+      function drawDrone() {
+        // Clear the canvas
+        ctx.clearRect(0, 0, droneCanvas.width, droneCanvas.height);
+
+        // Set the origin to the center of the canvas
+        ctx.save();
+        ctx.translate(droneCanvas.width / 2, droneCanvas.height / 2);
+        ctx.rotate((tilt * Math.PI) / 180); // Convert tilt angle to radians and rotate
+
+        // Draw the main body (bar)
+        ctx.beginPath();
+        ctx.rect(-100, -5, 200, 10);
+        ctx.fillStyle = "#2b2b2b";
+        ctx.fill();
+        ctx.stroke();
+
+        // Draw the rounded battery bump in the middle
+        ctx.beginPath();
+        ctx.moveTo(-20, -15);
+        ctx.lineTo(20, -15);
+        ctx.arcTo(30, -15, 30, -5, 10);
+        ctx.lineTo(30, 5);
+        ctx.arcTo(30, 15, 20, 15, 10);
+        ctx.lineTo(-20, 15);
+        ctx.arcTo(-30, 15, -30, 5, 10);
+        ctx.lineTo(-30, -5);
+        ctx.arcTo(-30, -15, -20, -15, 10);
+        ctx.fillStyle = "#cf0e0e";
+        ctx.fill();
+        ctx.stroke();
+
+        // Draw the propellers
+        function drawPropeller(x, y) {
+          ctx.beginPath();
+          ctx.ellipse(x, y - 10, 30, 10, 0, 0, 2 * Math.PI);
+          ctx.fillStyle = "#b9b2b2";
+          ctx.fill();
+          ctx.stroke();
+        }
+
+        drawPropeller(-100, 0); // Left propeller
+        drawPropeller(100, 0); // Right propeller
+
+        // Draw the landing gear
+        function drawLandingGear(x, y, factor) {
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x, y + 30);
+          ctx.lineTo(x + 10 * factor, y + 30);
+          ctx.lineTo(x + 10 * factor, y + 25);
+          ctx.lineTo(x, y + 25);
+          ctx.strokeStyle = "#000";
+          ctx.stroke();
+        }
+
+        drawLandingGear(-35, 5, -1); // Left landing gear
+        drawLandingGear(35, 5, 1); // Right landing gear
+
+        ctx.restore(); // Restore to the original state
+
+        requestAnimationFrame(drawDrone);
+      }
+
+      drawDrone();
+
+      const data = {
+        labels: [],
+        datasets: [
+          {
+            label: "Angle",
+            data: [],
+            tension: 0.1,
+            borderColor: "#5260dd",
+          },
+        ],
+      };
+      const config = {
+        type: "line",
+        data: data,
+        options: {
+          x: {
+            ticks: {
+              display: false, // Hide x-axis ticks
+            },
+            grid: {
+              display: false, // Hide x-axis grid lines
+            },
+            border: {
+              color: "#ddd9d9", // Color for the x-axis
+              width: 2, // Thickness for the x-axis
+            },
+          },
+          y: {
+            beginAtZero: false,
+            min: -90, // Set the minimum value for y-axis
+            max: 90, // Set the maximum value for y-axis,
+          },
+          plugins: {
+            legend: {
+              display: false, // Hide the legend
+            },
+          },
+        },
+      };
+
+      const data2 = {
+        labels: [],
+        datasets: [
+          {
+            label: "P",
+            data: [],
+            tension: 0.1,
+            borderColor: "#5260dd",
+          },
+          {
+            label: "I",
+            data: [],
+            tension: 0.1,
+            borderColor: "#dd5252",
+          },
+          {
+            label: "D",
+            data: [],
+            tension: 0.1,
+            borderColor: "#52dd93",
+          },
+          {
+            label: "DPS",
+            data: [],
+            tension: 0.1,
+            borderColor: "#000000",
+          },
+        ],
+      };
+      const config2 = {
+        type: "line",
+        data: data2,
+        options: {
+          x: {
+            ticks: {
+              display: false, // Hide x-axis ticks
+            },
+            grid: {
+              display: false, // Hide x-axis grid lines
+            },
+            border: {
+              color: "#ddd9d9", // Color for the x-axis
+              width: 2, // Thickness for the x-axis
+            },
+          },
+          y: {
+            beginAtZero: false,
+          },
+          plugins: {
+            legend: {
+              display: false, // Hide the legend
+            },
+          },
+        },
+      };
+
+      // Render the chart
+      const angleChart = new Chart(chartCavnas, config);
+      const iChart = new Chart(iCanvas, config2);
+
+      function reset() {
+        tiltHistor = [];
+        pHistory = [];
+        iHistory = [];
+        dHistory = [];
+        dpsHistory = [];
+        prevError = 0;
+        droneDps = 0;
+        tilt = 0;
+      }
+
+      function level() {
+        const desiredAngle = 0;
+        if (desiredAngle === tilt) {
+          return;
+        }
+        const error = desiredAngle - tilt;
+
+        const p = pGain * error;
+
+        if (Math.abs(error) < 30) {
+          i = i + error * iGain;
+        } else {
+          i = 0;
+        }
+
+        const d = dGain * (error - prevError);
+        prevError = error;
+
+        if (Math.abs(tilt) > 0.75) {
+          pHistory.push(p);
+          iHistory.push(i);
+          dHistory.push(d);
+          dpsHistory.push(droneDps);
+
+          tiltHistor.push(tilt);
+
+          updateChart();
+        }
+
+        const pid = p + i + d;
+
+        droneDps += pid;
+
+        tilt = tilt - droneDps;
+
+        sliderInput.value = tilt;
+
+        let timeut = setTimeout(() => {
+          clearTimeout(timeut);
+          level();
+        }, 40);
+      }
+
+      function updateChart() {
+        angleChart.data.labels.push("");
+        angleChart.data.datasets[0].data = tiltHistor;
+        angleChart.update();
+
+        iChart.data.labels.push("");
+        iChart.data.datasets[0].data = pHistory;
+        iChart.data.datasets[1].data = iHistory;
+        iChart.data.datasets[2].data = dHistory;
+        iChart.data.datasets[3].data = dpsHistory;
+        iChart.update();
+      }
+    </script>
+  </body>
+</html>
